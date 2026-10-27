@@ -2,9 +2,9 @@
 Stratégie adaptative : Big Money + attaques.
 
 Lit le stock : n'achète / ne joue que des cartes réellement disponibles.
-Priorité : Province/Colonie, une Sorcière, un Bandit, une Milice, puis Or.
-Chapelle dès que la Sorcière est au royaume. Pas de Chambre du conseil,
-de Bureaucrate ni de Jardin.
+Priorité : Province/Colonie, Sorcière (+2e si Village), Bandit, Milice, Or.
+Village/Port avant une 2e terminale. Chapelle jouée dès qu'il y a du rebut.
+Greening dès 6 Provinces. Pas de Chambre du conseil, Bureaucrate ni Jardin.
 
 Les hooks de l'arbitre (défausse, écart, réception) choisissent toujours une
 carte de la liste reçue : on jette le rebut, on garde l'argent et les attaques.
@@ -24,19 +24,18 @@ logger = logging.getLogger("strategy")
 
 PLAYER_NAME = os.environ.get("PLAYER_NAME", "Groupe 5")
 
-PROVINCES_LEFT_FOR_DUCHY = 5
+PROVINCES_LEFT_FOR_DUCHY = 6
 PROVINCES_LEFT_FOR_ESTATE = 2
-PROVINCES_STOP_ACTIONS = 4
+PROVINCES_STOP_ACTIONS = 6
 
 # Caps par type (évite d'asphyxier le deck)
 CAPS: dict[CardName, int] = {
     CardName.HIRELING: 3,
-    CardName.WITCH: 1,
+    CardName.WITCH: 2,
     CardName.CHAPEL: 1,
     CardName.LABORATORY: 2,
     CardName.FESTIVAL: 2,
     CardName.MARKET: 2,
-    CardName.COUNCILROOM: 1,
     CardName.BANDIT: 1,
     CardName.MILITIA: 1,
     CardName.ARTIFICER: 1,
@@ -49,6 +48,26 @@ CAPS: dict[CardName, int] = {
     CardName.WOODCUTTER: 1,
     CardName.DISTANTSHORE: 1,
 }
+
+TERMINALS = frozenset({
+    CardName.WITCH,
+    CardName.BANDIT,
+    CardName.MILITIA,
+    CardName.SMITHY,
+    CardName.MONEYLENDER,
+    CardName.WOODCUTTER,
+    CardName.CHAPEL,
+})
+
+ENGINES = frozenset({
+    CardName.VILLAGE,
+    CardName.PORT,
+    CardName.FARMINGVILLAGE,
+    CardName.MARKET,
+    CardName.LABORATORY,
+    CardName.FESTIVAL,
+    CardName.MAGPIE,
+})
 
 
 @dataclass
@@ -173,16 +192,63 @@ def _witch_in_kingdom(game: Game, mem: GameMemory) -> bool:
     )
 
 
+def _terminal_bought(mem: GameMemory) -> int:
+    return sum(bought_count(mem, card) for card in TERMINALS)
+
+
+def _engine_bought(mem: GameMemory) -> int:
+    return sum(bought_count(mem, card) for card in ENGINES)
+
+
+def _needs_engine(mem: GameMemory) -> bool:
+    """True si une terminale de plus noierait le deck sans Village/Port."""
+    return _terminal_bought(mem) > _engine_bought(mem)
+
+
+def _try_engine_buy(
+    game: Game,
+    mem: GameMemory,
+    *,
+    allow_actions: bool,
+    money: int,
+) -> CardName | None:
+    if money >= 5:
+        for card in (CardName.LABORATORY, CardName.FESTIVAL, CardName.MARKET):
+            picked = _try_action_buy(game, mem, card, allow_actions=allow_actions)
+            if picked:
+                return picked
+    if money >= 4:
+        for card in (CardName.PORT, CardName.FARMINGVILLAGE, CardName.MAGPIE):
+            picked = _try_action_buy(game, mem, card, allow_actions=allow_actions)
+            if picked:
+                return picked
+    if money >= 3:
+        picked = _try_action_buy(game, mem, CardName.VILLAGE, allow_actions=allow_actions)
+        if picked:
+            return picked
+    return None
+
+
+def _can_buy_witch(game: Game, mem: GameMemory) -> bool:
+    """2e Sorcière seulement si on a déjà un Village/Port/moteur."""
+    have = bought_count(mem, CardName.WITCH)
+    if have >= 2:
+        return False
+    if have >= 1 and _engine_bought(mem) < 1:
+        return False
+    return under_cap(mem, CardName.WITCH) and can_buy(game, CardName.WITCH)
+
+
 def _prefer_attack(
     game: Game,
     mem: GameMemory,
     curses_left: int,
 ) -> CardName | None:
     """Sorcière tant qu'il reste des Malédictions, sinon Bandit (Or + pillage)."""
-    if curses_left > 0:
-        picked = _try_action_buy(game, mem, CardName.WITCH, allow_actions=True)
-        if picked:
-            return picked
+    if _needs_engine(mem):
+        return None
+    if curses_left > 0 and _can_buy_witch(game, mem):
+        return CardName.WITCH
     return _try_action_buy(game, mem, CardName.BANDIT, allow_actions=True)
 
 
@@ -206,6 +272,10 @@ def choose_buy(
         return CardName.PLATINUM
 
     if money >= 6 and allow_actions:
+        if _needs_engine(mem):
+            picked = _try_engine_buy(game, mem, allow_actions=True, money=money)
+            if picked:
+                return picked
         picked = _prefer_attack(game, mem, curses_left)
         if picked:
             return picked
@@ -224,6 +294,10 @@ def choose_buy(
         return CardName.DUCHY
 
     if money >= 5 and allow_actions:
+        if _needs_engine(mem):
+            picked = _try_engine_buy(game, mem, allow_actions=True, money=money)
+            if picked:
+                return picked
         picked = _prefer_attack(game, mem, curses_left)
         if picked:
             return picked
@@ -238,6 +312,10 @@ def choose_buy(
                 return picked
 
     if money >= 4 and allow_actions:
+        if _needs_engine(mem):
+            picked = _try_engine_buy(game, mem, allow_actions=True, money=money)
+            if picked:
+                return picked
         picked = _try_action_buy(game, mem, CardName.MILITIA, allow_actions=True)
         if picked:
             return picked
@@ -251,10 +329,11 @@ def choose_buy(
             )
             if picked:
                 return picked
-        for card in (CardName.SMITHY, CardName.MONEYLENDER):
-            picked = _try_action_buy(game, mem, card, allow_actions=True)
-            if picked:
-                return picked
+        if not _needs_engine(mem):
+            for card in (CardName.SMITHY, CardName.MONEYLENDER):
+                picked = _try_action_buy(game, mem, card, allow_actions=True)
+                if picked:
+                    return picked
 
     # Chapelle à 2 ou 3 : on ne dépense pas une main à 4+ pour une carte à 2.
     if money < 4 and _witch_in_kingdom(game, mem):
@@ -263,14 +342,19 @@ def choose_buy(
             return picked
 
     if money >= 3:
+        if allow_actions and _needs_engine(mem):
+            picked = _try_engine_buy(game, mem, allow_actions=True, money=money)
+            if picked:
+                return picked
         picked = _try_action_buy(game, mem, CardName.VILLAGE, allow_actions=allow_actions)
         if picked:
             return picked
-        picked = _try_action_buy(
-            game, mem, CardName.WOODCUTTER, allow_actions=allow_actions
-        )
-        if picked:
-            return picked
+        if allow_actions and not _needs_engine(mem):
+            picked = _try_action_buy(
+                game, mem, CardName.WOODCUTTER, allow_actions=True
+            )
+            if picked:
+                return picked
         if can_buy(game, CardName.SILVER):
             return CardName.SILVER
 
@@ -288,8 +372,33 @@ def _register_buy(mem: GameMemory, card: CardName) -> None:
     mem.bought[card] = bought_count(mem, card) + 1
 
 
+def _chapel_trash_targets(hand: Cards, provinces_left: int) -> int:
+    """Combien de cartes la Chapelle peut utilement écarter dans cette main."""
+    total = 0
+    for card_name, qty in hand.quantities.items():
+        if qty <= 0:
+            continue
+        if card_name == CardName.CHAPEL:
+            continue
+        if card_name in (CardName.CURSE, CardName.COPPER):
+            total += qty
+        elif (
+            card_name == CardName.ESTATE
+            and provinces_left > PROVINCES_LEFT_FOR_ESTATE
+        ):
+            total += qty
+        elif card_name in (
+            CardName.CHANCELLOR,
+            CardName.WOODCUTTER,
+            CardName.CELLAR,
+            CardName.WORKSHOP,
+        ):
+            total += qty
+    return total
+
+
 def choose_action(hand: Cards | None, game: Game) -> CardName | None:
-    """Joue d'abord les +Actions, puis Hireling, puis le reste."""
+    """Joue +Actions, puis Chapelle s'il y a du rebut, puis Hireling, puis attaques."""
     if hand is None:
         return None
 
@@ -321,6 +430,13 @@ def choose_action(hand: Cards | None, game: Game) -> CardName | None:
             reverse=True,
         )
         return non_terminals[0][0]
+
+    provinces_left = stock_quantity(game.stock, CardName.PROVINCE)
+    if (
+        hand_quantity(hand, CardName.CHAPEL) > 0
+        and _chapel_trash_targets(hand, provinces_left) > 0
+    ):
+        return CardName.CHAPEL
 
     if hand_quantity(hand, CardName.HIRELING) > 0:
         return CardName.HIRELING

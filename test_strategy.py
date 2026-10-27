@@ -137,7 +137,7 @@ def main() -> None:
     )
     mem.bought[CardName.WITCH] = 1
     check(
-        "$6 une seule sorciere puis or",
+        "$6 sorciere seule sans village -> or",
         choose_buy(
             make_game({}, stock={CardName.WITCH: 10, CardName.GOLD: 30}),
             6,
@@ -145,7 +145,27 @@ def main() -> None:
         ),
         CardName.GOLD,
     )
+    check(
+        "$4 apres sorciere -> port pas milice",
+        choose_buy(
+            make_game({}, stock={CardName.MILITIA: 10, CardName.PORT: 10}),
+            4,
+            mem,
+        ),
+        CardName.PORT,
+    )
+    mem.bought[CardName.VILLAGE] = 1
+    check(
+        "$5 2e sorciere si village",
+        choose_buy(
+            make_game({}, stock={CardName.WITCH: 10, CardName.MARKET: 10}),
+            5,
+            mem,
+        ),
+        CardName.WITCH,
+    )
     mem.bought.pop(CardName.WITCH, None)
+    mem.bought.pop(CardName.VILLAGE, None)
 
     # Witch si malédictions
     g_w = make_game({}, stock={CardName.WITCH: 10, CardName.MARKET: 10})
@@ -156,19 +176,19 @@ def main() -> None:
     )
     check("$5 sans curse -> market", choose_buy(g_nocurse, 5, mem), CardName.MARKET)
 
-    # Fin de partie
+    # Fin de partie / greening à 6
     check(
-        "$5 p4 duchy",
-        choose_buy(make_game({}, provinces=4, stock={CardName.MARKET: 10}), 5, mem),
+        "$5 p6 duchy",
+        choose_buy(make_game({}, provinces=6, stock={CardName.MARKET: 10}), 5, mem),
         CardName.DUCHY,
     )
     check(
-        "$4 p4 stop actions -> silver",
-        choose_buy(make_game({}, provinces=4, stock={CardName.PORT: 10}), 4, mem),
+        "$4 p6 stop actions -> silver",
+        choose_buy(make_game({}, provinces=6, stock={CardName.PORT: 10}), 4, mem),
         CardName.SILVER,
     )
 
-    # Actions : +actions d'abord
+    # Actions : +actions d'abord, Chapelle si rebut
     hand = Cards(
         quantities={CardName.MARKET: 1, CardName.SMITHY: 1, CardName.COPPER: 1}
     )
@@ -176,6 +196,19 @@ def main() -> None:
         "market avant smithy",
         choose_action(hand, make_game({}, stock={CardName.MARKET: 1, CardName.SMITHY: 1})),
         CardName.MARKET,
+    )
+    chapel_hand = Cards(
+        quantities={
+            CardName.CHAPEL: 1,
+            CardName.WITCH: 1,
+            CardName.CURSE: 1,
+            CardName.COPPER: 1,
+        }
+    )
+    check(
+        "chapelle avant witch si malediction",
+        choose_action(chapel_hand, make_game({}, stock={CardName.CURSE: 10})),
+        CardName.CHAPEL,
     )
 
     end_game_state("t1")
