@@ -1,14 +1,15 @@
 """
-Stratégie adaptative (replays Bowser / Empire / We Are The People).
+Stratégie adaptative (replays Bowser / Empire Remake / WATP).
 
-Deux modes selon le kingdom :
-1) Plateau d'ATTAQUE (Witch / Militia / Bandit) :
-   Witch×2, Militia, Festival, Hireling, Lab — greening prudent (course Province).
-2) Plateau CALME (ex. Bowser 15:15) :
-   Big Money pur (Argent → Or → Province), AUCUNE action splash,
-   greening Duchés agressif comme Bowser (6 Duchés / 6 Provinces).
+Trois modes selon le kingdom :
+1) JARDINS (prioritaire) — Empire/Bowser 15:45–15:47 :
+   Workshop×2 + Jardins×12 + Domaines ; Or/Provinces en soutien.
+2) ATTAQUE (Witch / Militia / Bandit) :
+   Witch×2, Militia, Festival, Hireling, Lab — greening prudent.
+3) CALME :
+   Big Money pur + Duchés agressifs (Bowser sans Jardins).
 
-Pas de Colonie. Cartes faibles ignorées (Council Room, Fortune Teller, etc.).
+Pas de Colonie. Council Room / Fortune Teller ignorés.
 
 Toute exception dans decide_play → END_TURN.
 """
@@ -48,7 +49,9 @@ CAPS: dict[CardName, int] = {
     CardName.MONEYLENDER: 1,
     CardName.REMODEL: 1,
     CardName.BUREAUCRAT: 1,
-    CardName.GARDENS: 4,
+    CardName.WORKSHOP: 2,
+    CardName.WOODCUTTER: 1,
+    CardName.GARDENS: 12,
 }
 
 
@@ -165,16 +168,24 @@ def attack_board(game: Game) -> bool:
     )
 
 
+def gardens_board(game: Game) -> bool:
+    return in_kingdom(game, CardName.GARDENS)
+
+
 def greening_thresholds(
     n_players: int,
     *,
     quiet_board: bool = False,
+    gardens_mode: bool = False,
 ) -> tuple[int, int, int]:
-    """(duchy_at, gardens_at, stop_actions_at).
-
-    Calme (Bowser) : green tôt et fort.
-    Attaque (WATP 14:26) : green plus tard pour ne pas rater les Provinces.
-    """
+    """(duchy_at, gardens_at, stop_actions_at)."""
+    if gardens_mode:
+        # Acheter des Jardins très tôt ; Workshop jusqu'à la fin.
+        if n_players <= 2:
+            return 6, 8, 1
+        if n_players == 3:
+            return 10, 12, 1
+        return 11, 12, 1
     if quiet_board:
         if n_players <= 2:
             return 5, 6, 2
@@ -249,9 +260,25 @@ def _try(
     return None
 
 
-def _want_gardens(mem: GameMemory, provinces_left: int, gardens_at: int) -> bool:
+def _want_gardens(
+    mem: GameMemory,
+    provinces_left: int,
+    gardens_at: int,
+    *,
+    gardens_mode: bool = False,
+) -> bool:
     if not under_cap(mem, CardName.GARDENS):
         return False
+    if gardens_mode:
+        # Empire Remake : Jardins dès que l'éco démarre / Workshop en jeu.
+        if bought_count(mem, CardName.WORKSHOP) > 0:
+            return True
+        if bought_count(mem, CardName.GOLD) >= 1:
+            return True
+        if bought_count(mem, CardName.SILVER) >= 2:
+            return True
+        if approx_deck_size(mem) >= 14:
+            return True
     if provinces_left <= gardens_at:
         return True
     if village_count(mem) > 0 and approx_deck_size(mem) >= 20:
@@ -269,14 +296,17 @@ def choose_buy(
     provinces_left = stock_quantity(game.stock, CardName.PROVINCE)
     n_players = max(2, len(game.players))
     mem.n_players = n_players
-    quiet = not attack_board(game)
+    g_mode = gardens_board(game)
+    quiet = (not attack_board(game)) and (not g_mode)
     duchy_at, gardens_at, stop_at = greening_thresholds(
-        n_players, quiet_board=quiet
+        n_players, quiet_board=quiet, gardens_mode=g_mode
     )
-    allow_actions = (not quiet) and provinces_left > stop_at
+    allow_actions = (g_mode or not quiet) and provinces_left > stop_at
     curses_left = stock_quantity(game.stock, CardName.CURSE)
     greening = provinces_left <= duchy_at
-    want_gardens = _want_gardens(mem, provinces_left, gardens_at)
+    want_gardens = _want_gardens(
+        mem, provinces_left, gardens_at, gardens_mode=g_mode
+    )
     witch_board = in_kingdom(game, CardName.WITCH)
 
     # --- Victoire / argent (pas de Colonie) --------------------------------
@@ -287,32 +317,49 @@ def choose_buy(
 
     if money >= 6:
         golds = bought_count(mem, CardName.GOLD)
-        # Hireling seulement en mode attaque (Bowser calme = Or pur).
+        # En mode Jardins : plafonner l'Or (Empire ~2–4), prioriser les VP.
+        gold_cap = 3 if g_mode else 99
         if (
             allow_actions
+            and (not g_mode)
             and golds >= 1
             and under_cap(mem, CardName.HIRELING)
             and can_buy(game, CardName.HIRELING)
         ):
             return CardName.HIRELING
-        if can_buy(game, CardName.GOLD):
+        if golds < gold_cap and can_buy(game, CardName.GOLD):
             return CardName.GOLD
-        if allow_actions and (picked := _try(game, mem, CardName.HIRELING)):
+        if (
+            allow_actions
+            and (not g_mode)
+            and (picked := _try(game, mem, CardName.HIRELING))
+        ):
             return picked
+        if g_mode and money >= 5 and can_buy(game, CardName.DUCHY):
+            return CardName.DUCHY
 
-    # Greening : tôt si plateau calme (Bowser), tard si attaque.
+    # Greening Duché
     if money >= 5 and provinces_left <= duchy_at and can_buy(game, CardName.DUCHY):
         return CardName.DUCHY
 
-    if money >= 4 and want_gardens and provinces_left <= gardens_at and can_buy(
-        game, CardName.GARDENS
-    ):
+    # Jardins agressifs (replay Empire 10× Gardens).
+    if money >= 4 and want_gardens and can_buy(game, CardName.GARDENS):
         return CardName.GARDENS
 
     buy_actions = allow_actions and not action_overload(mem)
 
-    # --- Mode attaque uniquement (sinon BM pur) ---------------------------
-    if buy_actions and money >= 5:
+    # --- Mode Jardins : Workshop / Woodcutter avant le splash attaque ------
+    if g_mode and buy_actions and money >= 3:
+        if picked := _try(game, mem, CardName.WORKSHOP):
+            return picked
+        if (
+            bought_count(mem, CardName.WORKSHOP) >= 1
+            and (picked := _try(game, mem, CardName.WOODCUTTER))
+        ):
+            return picked
+
+    # --- Mode attaque -----------------------------------------------------
+    if buy_actions and money >= 5 and not g_mode:
         if curses_left > 0 and (picked := _try(game, mem, CardName.WITCH)):
             return picked
         if want_festival(mem) and (picked := _try(game, mem, CardName.FESTIVAL)):
@@ -326,7 +373,7 @@ def choose_buy(
         if village_count(mem) >= 1 and (picked := _try(game, mem, CardName.MARKET)):
             return picked
 
-    if buy_actions and money >= 4:
+    if buy_actions and money >= 4 and not g_mode:
         if picked := _try(game, mem, CardName.MILITIA):
             return picked
         if need_villages(mem):
@@ -337,7 +384,6 @@ def choose_buy(
             ):
                 if picked := _try(game, mem, village):
                     return picked
-        # Smithy seulement en soutien d'attaque déjà prise (pas d'ouverture calme).
         if (
             (
                 bought_count(mem, CardName.WITCH) > 0
@@ -357,7 +403,7 @@ def choose_buy(
         ):
             return picked
 
-    if buy_actions and money >= 3:
+    if buy_actions and money >= 3 and not g_mode:
         if need_villages(mem) and (picked := _try(game, mem, CardName.VILLAGE)):
             return picked
 
@@ -365,24 +411,24 @@ def choose_buy(
         buy_actions
         and money == 2
         and witch_board
+        and not g_mode
         and (picked := _try(game, mem, CardName.CHAPEL))
     ):
         return picked
 
-    if money >= 4 and want_gardens and can_buy(game, CardName.GARDENS):
-        return CardName.GARDENS
-
     if money >= 3 and can_buy(game, CardName.SILVER):
         return CardName.SILVER
 
+    # Domaines : tôt en mode Jardins (gonfler le deck / Workshop).
     if (
         money >= 2
-        and provinces_left <= PROVINCES_LEFT_FOR_ESTATE
         and can_buy(game, CardName.ESTATE)
+        and (
+            g_mode
+            or provinces_left <= PROVINCES_LEFT_FOR_ESTATE
+            or (money < 3 and greening)
+        )
     ):
-        return CardName.ESTATE
-
-    if money >= 2 and money < 3 and greening and can_buy(game, CardName.ESTATE):
         return CardName.ESTATE
 
     return None
@@ -396,13 +442,17 @@ def choose_action(hand: Cards | None, game: Game) -> CardName | None:
     if hand is None:
         return None
 
-    # Chapelle si rebut en main (Domaines / Malédictions / Cuivres).
+    # Workshop prioritaire en mode Jardins (gain Domaine/Jardin/Argent).
+    if hand_quantity(hand, CardName.WORKSHOP) > 0 and gardens_board(game):
+        return CardName.WORKSHOP
+
+    # Chapelle si rebut en main — PAS les Domaines si on joue Jardins/Workshop.
     if hand_quantity(hand, CardName.CHAPEL) > 0:
-        junk = (
-            hand_quantity(hand, CardName.CURSE)
-            + hand_quantity(hand, CardName.COPPER)
-            + hand_quantity(hand, CardName.ESTATE)
+        junk = hand_quantity(hand, CardName.CURSE) + hand_quantity(
+            hand, CardName.COPPER
         )
+        if not gardens_board(game):
+            junk += hand_quantity(hand, CardName.ESTATE)
         if junk > 0:
             return CardName.CHAPEL
 
@@ -560,7 +610,7 @@ def keep_value(card: CardName) -> int:
         return 50 + cls.money * 10
     if cls.is_victory:
         if card == CardName.GARDENS:
-            return -40
+            return 35  # garder les Jardins (stratégie Empire/Bowser)
         return -100 + cls.victory_points
     return 0
 
@@ -591,13 +641,20 @@ def gain_score(card: CardName, mem: GameMemory) -> int:
         CardName.VILLAGE: 124,
         CardName.SMITHY: 120,
         CardName.DUCHY: 110 if late else 28,
-        CardName.GARDENS: 100 if gardens_time or approx_deck_size(mem) >= 20 else 40,
+        CardName.GARDENS: 180 if gardens_time or approx_deck_size(mem) >= 14 else 120,
+        CardName.WORKSHOP: 160,
+        CardName.WOODCUTTER: 95,
         CardName.MINE: 148,
         CardName.MONEYLENDER: 136,
         CardName.CHAPEL: 152,
         CardName.REMODEL: 90 if late else 55,
         CardName.SILVER: 80,
-        CardName.ESTATE: 24 if endgame else 4,
+        CardName.ESTATE: (
+            90
+            if bought_count(mem, CardName.WORKSHOP) > 0
+            or bought_count(mem, CardName.GARDENS) > 0
+            else (24 if endgame else 4)
+        ),
         CardName.COPPER: 1,
         CardName.BUREAUCRAT: 50,
     }
@@ -628,13 +685,22 @@ def confirm_trash(card: CardName, hand: list[CardName], mem: GameMemory) -> bool
     del hand
     if card in (CardName.CURSE, CardName.COPPER):
         return True
-    if card == CardName.ESTATE and mem.provinces_left > PROVINCES_LEFT_FOR_ESTATE:
+    # En mode Jardins / Workshop : on GARDE les Domaines (points + taille deck).
+    gardens_engine = (
+        bought_count(mem, CardName.GARDENS) > 0
+        or bought_count(mem, CardName.WORKSHOP) > 0
+    )
+    if (
+        card == CardName.ESTATE
+        and mem.provinces_left > PROVINCES_LEFT_FOR_ESTATE
+        and not gardens_engine
+    ):
         return True
+    if card == CardName.WOODCUTTER:
+        return False
     return card in (
         CardName.CHANCELLOR,
-        CardName.WOODCUTTER,
         CardName.CELLAR,
-        CardName.WORKSHOP,
     )
 
 
@@ -691,9 +757,7 @@ def skip_reception(card: CardName, hand: list[CardName]) -> bool:
         return True
     return card in (
         CardName.CHANCELLOR,
-        CardName.WOODCUTTER,
         CardName.CELLAR,
-        CardName.WORKSHOP,
     )
 
 

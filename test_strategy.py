@@ -37,7 +37,6 @@ def make_game(
         CardName.ESTATE: 8,
         CardName.CURSE: 30,
         CardName.COPPER: 60,
-        CardName.GARDENS: 12,
     }
     if stock:
         base.update(stock)
@@ -67,7 +66,6 @@ def stock(extra: dict[CardName, int] | None = None) -> dict[CardName, int]:
         CardName.HIRELING: 10,
         CardName.CHAPEL: 10,
         CardName.MARKET: 10,
-        CardName.GARDENS: 12,
         CardName.FORTUNETELLER: 10,
         CardName.COUNCILROOM: 10,
     }
@@ -181,9 +179,35 @@ def main() -> None:
     )
     check(
         "$4 p4 gardens (2j)",
-        choose_buy(make_game({}, provinces=4, stock=stock()), 4, mem),
+        choose_buy(
+            make_game({}, provinces=4, stock=stock({CardName.GARDENS: 12})),
+            4,
+            mem,
+        ),
         CardName.GARDENS,
     )
+    mem.bought.clear()
+    check(
+        "$3 workshop si jardins",
+        choose_buy(
+            make_game({}, stock={CardName.GARDENS: 12, CardName.WORKSHOP: 10}),
+            3,
+            mem,
+        ),
+        CardName.WORKSHOP,
+    )
+    mem.bought[CardName.WORKSHOP] = 1
+    mem.bought[CardName.SILVER] = 2
+    check(
+        "$4 gardens agressif apres workshop",
+        choose_buy(
+            make_game({}, provinces=8, stock={CardName.GARDENS: 12, CardName.WORKSHOP: 10}),
+            4,
+            mem,
+        ),
+        CardName.GARDENS,
+    )
+    mem.bought.clear()
     check(
         "$5 p5 duchy (3j)",
         choose_buy(
