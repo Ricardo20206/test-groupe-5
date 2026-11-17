@@ -137,13 +137,13 @@ def main() -> None:
     )
     mem.bought[CardName.FARMINGVILLAGE] = 1
     check(
-        "$4 pretteur apres village",
+        "$4 smithy soutien apres attaques",
         choose_buy(
             make_game({}, stock=stock({CardName.MONEYLENDER: 10})),
             4,
             mem,
         ),
-        CardName.MONEYLENDER,
+        CardName.SMITHY,
     )
 
     mem.bought.clear()
@@ -206,13 +206,16 @@ def main() -> None:
 
     mem.bought.clear()
     check(
-        "$4 smithy sans attack pile",
+        "$4 plateau calme -> silver (pas smithy/CR)",
         choose_buy(
             make_game(
                 {},
                 stock={
                     CardName.SMITHY: 10,
+                    CardName.COUNCILROOM: 10,
                     CardName.MILITIA: 0,
+                    CardName.WITCH: 0,
+                    CardName.BANDIT: 0,
                     CardName.FARMINGVILLAGE: 0,
                     CardName.PORT: 0,
                     CardName.VILLAGE: 0,
@@ -224,7 +227,26 @@ def main() -> None:
             4,
             mem,
         ),
-        CardName.SMITHY,
+        CardName.SILVER,
+    )
+    check(
+        "$5 p8 duchy plateau calme (3j style Bowser)",
+        choose_buy(
+            make_game(
+                {},
+                provinces=8,
+                n_players=3,
+                stock={
+                    CardName.SMITHY: 10,
+                    CardName.MILITIA: 0,
+                    CardName.WITCH: 0,
+                    CardName.BANDIT: 0,
+                },
+            ),
+            5,
+            mem,
+        ),
+        CardName.DUCHY,
     )
 
     chapel_hand = Cards(

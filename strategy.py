@@ -1,16 +1,14 @@
 """
-Stratégie agressive anti-classement (Empire / Bowser / Royaume).
+Stratégie adaptative (replays Bowser / Empire / We Are The People).
 
-Socle : Argent → attaques → Or / Hireling → Province.
-Priorité kingdom (caps) :
-- Witch×2 + Militia×1 (+ Bandit / Fortune Teller) : asphyxier l'adversaire
-- Festival×2 + FV/Port : moteur + achats multiples pour greening
-- Hireling×2 après le 1er Or, Lab×2, Smithy si pas d'attaque
-- Chapelle×1 (à 2$) contre les Malédictions ; Mine / Prêteur
-- Pas de Colonie (élimination / −10000)
+Deux modes selon le kingdom :
+1) Plateau d'ATTAQUE (Witch / Militia / Bandit) :
+   Witch×2, Militia, Festival, Hireling, Lab — greening prudent (course Province).
+2) Plateau CALME (ex. Bowser 15:15) :
+   Big Money pur (Argent → Or → Province), AUCUNE action splash,
+   greening Duchés agressif comme Bowser (6 Duchés / 6 Provinces).
 
-Greening : Duchés / Jardins / Domaines dès que la pile Province baisse,
-sans abandonner la course aux Provinces.
+Pas de Colonie. Cartes faibles ignorées (Council Room, Fortune Teller, etc.).
 
 Toute exception dans decide_play → END_TURN.
 """
@@ -158,12 +156,31 @@ def approx_deck_size(mem: GameMemory) -> int:
     return 10 + sum(mem.bought.values())
 
 
-def greening_thresholds(n_players: int) -> tuple[int, int, int]:
+def attack_board(game: Game) -> bool:
+    """True si le kingdom permet une pression réelle (sinon = BM style Bowser)."""
+    return (
+        in_kingdom(game, CardName.WITCH)
+        or in_kingdom(game, CardName.MILITIA)
+        or in_kingdom(game, CardName.BANDIT)
+    )
+
+
+def greening_thresholds(
+    n_players: int,
+    *,
+    quiet_board: bool = False,
+) -> tuple[int, int, int]:
     """(duchy_at, gardens_at, stop_actions_at).
 
-    Replay 14:26 vs We Are The People : trop de Duchés trop tôt → 4 Provinces
-    contre 7. On green plus tard pour garder la course aux Provinces / Or.
+    Calme (Bowser) : green tôt et fort.
+    Attaque (WATP 14:26) : green plus tard pour ne pas rater les Provinces.
     """
+    if quiet_board:
+        if n_players <= 2:
+            return 5, 6, 2
+        if n_players == 3:
+            return 8, 9, 3
+        return 9, 10, 4
     if n_players <= 2:
         return 3, 4, 3
     if n_players == 3:
@@ -252,8 +269,11 @@ def choose_buy(
     provinces_left = stock_quantity(game.stock, CardName.PROVINCE)
     n_players = max(2, len(game.players))
     mem.n_players = n_players
-    duchy_at, gardens_at, stop_at = greening_thresholds(n_players)
-    allow_actions = provinces_left > stop_at
+    quiet = not attack_board(game)
+    duchy_at, gardens_at, stop_at = greening_thresholds(
+        n_players, quiet_board=quiet
+    )
+    allow_actions = (not quiet) and provinces_left > stop_at
     curses_left = stock_quantity(game.stock, CardName.CURSE)
     greening = provinces_left <= duchy_at
     want_gardens = _want_gardens(mem, provinces_left, gardens_at)
@@ -267,7 +287,7 @@ def choose_buy(
 
     if money >= 6:
         golds = bought_count(mem, CardName.GOLD)
-        # Empire / Bowser : 1er Or, puis Hireling×2, puis Or.
+        # Hireling seulement en mode attaque (Bowser calme = Or pur).
         if (
             allow_actions
             and golds >= 1
@@ -280,7 +300,7 @@ def choose_buy(
         if allow_actions and (picked := _try(game, mem, CardName.HIRELING)):
             return picked
 
-    # Greening prioritaire dès que la pile bouge (multi-buy Festival).
+    # Greening : tôt si plateau calme (Bowser), tard si attaque.
     if money >= 5 and provinces_left <= duchy_at and can_buy(game, CardName.DUCHY):
         return CardName.DUCHY
 
@@ -291,7 +311,7 @@ def choose_buy(
 
     buy_actions = allow_actions and not action_overload(mem)
 
-    # --- Attaques + moteur (pression max sur les bots fragiles) ------------
+    # --- Mode attaque uniquement (sinon BM pur) ---------------------------
     if buy_actions and money >= 5:
         if curses_left > 0 and (picked := _try(game, mem, CardName.WITCH)):
             return picked
@@ -301,15 +321,12 @@ def choose_buy(
             return picked
         if curses_left == 0 and (picked := _try(game, mem, CardName.BANDIT)):
             return picked
-        if not witch_board and (picked := _try(game, mem, CardName.COUNCILROOM)):
-            return picked
         if picked := _try(game, mem, CardName.MINE):
             return picked
         if village_count(mem) >= 1 and (picked := _try(game, mem, CardName.MARKET)):
             return picked
 
     if buy_actions and money >= 4:
-        # Militia avant Smithy : force défausse / élimine les hooks cassés.
         if picked := _try(game, mem, CardName.MILITIA):
             return picked
         if need_villages(mem):
@@ -320,10 +337,14 @@ def choose_buy(
             ):
                 if picked := _try(game, mem, village):
                     return picked
-        # Smithy seulement si pas d'attaque disponible / déjà prise.
+        # Smithy seulement en soutien d'attaque déjà prise (pas d'ouverture calme).
         if (
-            bought_count(mem, CardName.WITCH) == 0
-            and bought_count(mem, CardName.MILITIA) == 0
+            (
+                bought_count(mem, CardName.WITCH) > 0
+                or bought_count(mem, CardName.MILITIA) > 0
+                or bought_count(mem, CardName.BANDIT) > 0
+            )
+            and bought_count(mem, CardName.SMITHY) == 0
             and (picked := _try(game, mem, CardName.SMITHY))
         ):
             return picked
@@ -331,7 +352,6 @@ def choose_buy(
             return picked
         if picked := _try(game, mem, CardName.BUREAUCRAT):
             return picked
-        # Remodel seulement en tout fin (sinon on dilue la course Or/Province).
         if provinces_left <= PROVINCES_LEFT_FOR_ESTATE and (
             picked := _try(game, mem, CardName.REMODEL)
         ):
@@ -340,16 +360,7 @@ def choose_buy(
     if buy_actions and money >= 3:
         if need_villages(mem) and (picked := _try(game, mem, CardName.VILLAGE)):
             return picked
-        # Attaque cheap seulement si pas de Witch/Militia au kingdom.
-        if (
-            not witch_board
-            and not in_kingdom(game, CardName.MILITIA)
-            and bought_count(mem, CardName.FORTUNETELLER) == 0
-            and (picked := _try(game, mem, CardName.FORTUNETELLER))
-        ):
-            return picked
 
-    # Chapelle à 2$ seulement : à 3$ on préfère l'Argent (course BM).
     if (
         buy_actions
         and money == 2
