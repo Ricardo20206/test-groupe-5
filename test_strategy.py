@@ -170,19 +170,24 @@ def main() -> None:
 
     mem.bought.clear()
     check(
-        "$5 p5 duchy (2j)",
+        "$5 p5 pas encore duchy (2j) -> witch",
         choose_buy(make_game({}, provinces=5, stock=stock()), 5, mem),
+        CardName.WITCH,
+    )
+    check(
+        "$5 p3 duchy (2j)",
+        choose_buy(make_game({}, provinces=3, stock=stock()), 5, mem),
         CardName.DUCHY,
     )
     check(
-        "$4 p6 gardens (2j)",
-        choose_buy(make_game({}, provinces=6, stock=stock()), 4, mem),
+        "$4 p4 gardens (2j)",
+        choose_buy(make_game({}, provinces=4, stock=stock()), 4, mem),
         CardName.GARDENS,
     )
     check(
-        "$5 p8 duchy (3j)",
+        "$5 p5 duchy (3j)",
         choose_buy(
-            make_game({}, provinces=8, stock=stock(), n_players=3),
+            make_game({}, provinces=5, stock=stock(), n_players=3),
             5,
             mem,
         ),

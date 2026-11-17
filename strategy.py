@@ -161,14 +161,14 @@ def approx_deck_size(mem: GameMemory) -> int:
 def greening_thresholds(n_players: int) -> tuple[int, int, int]:
     """(duchy_at, gardens_at, stop_actions_at).
 
-    Style Empire gagnant : greening dès que la pile Province a bougé,
-    avec Festival pour multi-acheter Duchés / Jardins / Domaines.
+    Replay 14:26 vs We Are The People : trop de Duchés trop tôt → 4 Provinces
+    contre 7. On green plus tard pour garder la course aux Provinces / Or.
     """
     if n_players <= 2:
-        return 5, 6, 4
+        return 3, 4, 3
     if n_players == 3:
-        return 8, 9, 5
-    return 9, 10, 6
+        return 5, 6, 4
+    return 6, 7, 5
 
 
 def village_count(mem: GameMemory) -> int:
@@ -331,7 +331,10 @@ def choose_buy(
             return picked
         if picked := _try(game, mem, CardName.BUREAUCRAT):
             return picked
-        if greening and (picked := _try(game, mem, CardName.REMODEL)):
+        # Remodel seulement en tout fin (sinon on dilue la course Or/Province).
+        if provinces_left <= PROVINCES_LEFT_FOR_ESTATE and (
+            picked := _try(game, mem, CardName.REMODEL)
+        ):
             return picked
 
     if buy_actions and money >= 3:
