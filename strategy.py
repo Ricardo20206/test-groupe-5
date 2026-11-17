@@ -9,6 +9,9 @@ Trois modes selon le kingdom :
 3) CALME :
    Big Money pur + Duchés agressifs (Bowser sans Jardins).
 
+Chapelle ×1 : carte prioritaire (achat $2–$3 dès qu'elle est au kingdom,
+jeu dès qu'il y a du rebut en main).
+
 Pas de Colonie. Council Room / Fortune Teller ignorés.
 
 Toute exception dans decide_play → END_TURN.
@@ -307,7 +310,6 @@ def choose_buy(
     want_gardens = _want_gardens(
         mem, provinces_left, gardens_at, gardens_mode=g_mode
     )
-    witch_board = in_kingdom(game, CardName.WITCH)
 
     # --- Victoire / argent (pas de Colonie) --------------------------------
     if money >= 8 and can_buy(game, CardName.PROVINCE):
@@ -345,6 +347,14 @@ def choose_buy(
     # Jardins agressifs (replay Empire 10× Gardens).
     if money >= 4 and want_gardens and can_buy(game, CardName.GARDENS):
         return CardName.GARDENS
+
+    # --- Chapelle : priorité absolue en ouverture ($2 ou $3) --------------
+    if (
+        money in (2, 3)
+        and under_cap(mem, CardName.CHAPEL)
+        and can_buy(game, CardName.CHAPEL)
+    ):
+        return CardName.CHAPEL
 
     buy_actions = allow_actions and not action_overload(mem)
 
@@ -407,15 +417,6 @@ def choose_buy(
         if need_villages(mem) and (picked := _try(game, mem, CardName.VILLAGE)):
             return picked
 
-    if (
-        buy_actions
-        and money == 2
-        and witch_board
-        and not g_mode
-        and (picked := _try(game, mem, CardName.CHAPEL))
-    ):
-        return picked
-
     if money >= 3 and can_buy(game, CardName.SILVER):
         return CardName.SILVER
 
@@ -442,11 +443,7 @@ def choose_action(hand: Cards | None, game: Game) -> CardName | None:
     if hand is None:
         return None
 
-    # Workshop prioritaire en mode Jardins (gain Domaine/Jardin/Argent).
-    if hand_quantity(hand, CardName.WORKSHOP) > 0 and gardens_board(game):
-        return CardName.WORKSHOP
-
-    # Chapelle si rebut en main — PAS les Domaines si on joue Jardins/Workshop.
+    # Chapelle en premier dès qu'il y a du rebut (carte la plus importante).
     if hand_quantity(hand, CardName.CHAPEL) > 0:
         junk = hand_quantity(hand, CardName.CURSE) + hand_quantity(
             hand, CardName.COPPER
@@ -455,6 +452,10 @@ def choose_action(hand: Cards | None, game: Game) -> CardName | None:
             junk += hand_quantity(hand, CardName.ESTATE)
         if junk > 0:
             return CardName.CHAPEL
+
+    # Workshop ensuite en mode Jardins (gain Domaine/Jardin/Argent).
+    if hand_quantity(hand, CardName.WORKSHOP) > 0 and gardens_board(game):
+        return CardName.WORKSHOP
 
     non_terminals: list[tuple[CardName, type[Card]]] = []
     terminals: list[tuple[CardName, type[Card]]] = []

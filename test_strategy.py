@@ -84,12 +84,19 @@ def main() -> None:
     init_game("prio")
     mem = _memory("prio")
 
-    check("$3 silver (pas chapel a 3)", choose_buy(make_game({}), 3, mem), CardName.SILVER)
+    check("$3 silver (pas chapel au kingdom)", choose_buy(make_game({}), 3, mem), CardName.SILVER)
     check(
-        "$3 silver meme si witch kingdom",
+        "$3 chapel prioritaire si au kingdom",
+        choose_buy(make_game({}, stock=stock()), 3, mem),
+        CardName.CHAPEL,
+    )
+    mem.bought[CardName.CHAPEL] = 1
+    check(
+        "$3 silver apres chapel deja prise",
         choose_buy(make_game({}, stock=stock()), 3, mem),
         CardName.SILVER,
     )
+    mem.bought.clear()
     check("$6 gold", choose_buy(make_game({}), 6, mem), CardName.GOLD)
     check("$8 province", choose_buy(make_game({}), 8, mem), CardName.PROVINCE)
     check(
@@ -188,7 +195,24 @@ def main() -> None:
     )
     mem.bought.clear()
     check(
-        "$3 workshop si jardins",
+        "$3 chapel avant workshop si les deux",
+        choose_buy(
+            make_game(
+                {},
+                stock={
+                    CardName.GARDENS: 12,
+                    CardName.WORKSHOP: 10,
+                    CardName.CHAPEL: 10,
+                },
+            ),
+            3,
+            mem,
+        ),
+        CardName.CHAPEL,
+    )
+    mem.bought[CardName.CHAPEL] = 1
+    check(
+        "$3 workshop si jardins (apres chapel)",
         choose_buy(
             make_game({}, stock={CardName.GARDENS: 12, CardName.WORKSHOP: 10}),
             3,
@@ -218,13 +242,22 @@ def main() -> None:
         CardName.DUCHY,
     )
     check(
-        "$2 p3 estate",
-        choose_buy(make_game({}, provinces=3, stock=stock()), 2, mem),
+        "$2 p3 estate (sans chapel au kingdom)",
+        choose_buy(make_game({}, provinces=3, stock={CardName.MILITIA: 10}), 2, mem),
         CardName.ESTATE,
     )
     check(
-        "$2 chapel si witch kingdom",
+        "$2 chapel prioritaire",
         choose_buy(make_game({}, stock=stock()), 2, mem),
+        CardName.CHAPEL,
+    )
+    check(
+        "$2 chapel meme plateau calme",
+        choose_buy(
+            make_game({}, stock={CardName.CHAPEL: 10, CardName.SMITHY: 10}),
+            2,
+            mem,
+        ),
         CardName.CHAPEL,
     )
 
