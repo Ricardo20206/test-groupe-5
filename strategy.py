@@ -1,16 +1,16 @@
 """
-Stratégie calquée sur Le 4ème Empire (parties gagnantes récentes).
+Stratégie agressive anti-classement (Empire / Bowser / Royaume).
 
-Socle BM : Argent → Or → Province, puis greening Duché/Domaine/Gardens.
-Splash kingdom (caps serrés) :
-- Hireling×2 (Empire en gagne souvent avec)
-- Witch×2 / Militia×1 / Bandit×1 / Smithy×1
-- Laboratory×2, Festival×1, Village/FV/Port si 2+ terminales
-- Chapelle×1, Mine×1, Prêteur×1 (cartes prof)
-- Pas de Colonie
+Socle : Argent → attaques → Or / Hireling → Province.
+Priorité kingdom (caps) :
+- Witch×2 + Militia×1 (+ Bandit / Fortune Teller) : asphyxier l'adversaire
+- Festival×2 + FV/Port : moteur + achats multiples pour greening
+- Hireling×2 après le 1er Or, Lab×2, Smithy si pas d'attaque
+- Chapelle×1 (à 2$) contre les Malédictions ; Mine / Prêteur
+- Pas de Colonie (élimination / −10000)
 
-Greening : assez tôt, mais sans sacrifier la course aux Provinces
-(les défaites Empire sur-achètent Duché/Domaine).
+Greening : Duchés / Jardins / Domaines dès que la pile Province baisse,
+sans abandonner la course aux Provinces.
 
 Toute exception dans decide_play → END_TURN.
 """
@@ -35,10 +35,12 @@ CAPS: dict[CardName, int] = {
     CardName.WITCH: 2,
     CardName.MILITIA: 1,
     CardName.BANDIT: 1,
+    CardName.FORTUNETELLER: 1,
     CardName.SMITHY: 1,
+    CardName.COUNCILROOM: 1,
     CardName.HIRELING: 2,
     CardName.LABORATORY: 2,
-    CardName.FESTIVAL: 1,
+    CardName.FESTIVAL: 2,
     CardName.VILLAGE: 1,
     CardName.FARMINGVILLAGE: 1,
     CardName.PORT: 1,
@@ -159,13 +161,14 @@ def approx_deck_size(mem: GameMemory) -> int:
 def greening_thresholds(n_players: int) -> tuple[int, int, int]:
     """(duchy_at, gardens_at, stop_actions_at).
 
-    Moins agressif qu'avant : les losses Empire ont trop de Duchés vs Provinces.
+    Style Empire gagnant : greening dès que la pile Province a bougé,
+    avec Festival pour multi-acheter Duchés / Jardins / Domaines.
     """
     if n_players <= 2:
-        return 4, 5, 3
+        return 5, 6, 4
     if n_players == 3:
-        return 7, 8, 4
-    return 8, 9, 5
+        return 8, 9, 5
+    return 9, 10, 6
 
 
 def village_count(mem: GameMemory) -> int:
@@ -186,11 +189,22 @@ def terminal_count(mem: GameMemory) -> int:
         + bought_count(mem, CardName.BUREAUCRAT)
         + bought_count(mem, CardName.MINE)
         + bought_count(mem, CardName.MONEYLENDER)
+        + bought_count(mem, CardName.COUNCILROOM)
+        + bought_count(mem, CardName.FORTUNETELLER)
     )
 
 
 def need_villages(mem: GameMemory) -> bool:
     return terminal_count(mem) >= 2 and village_count(mem) < 1
+
+
+def want_festival(mem: GameMemory) -> bool:
+    """Festival dès 1 terminale / Witch : +achat pour greening et pression."""
+    return (
+        terminal_count(mem) >= 1
+        or bought_count(mem, CardName.WITCH) >= 1
+        or bought_count(mem, CardName.HIRELING) >= 1
+    )
 
 
 def action_overload(mem: GameMemory) -> bool:
@@ -201,7 +215,7 @@ def action_overload(mem: GameMemory) -> bool:
         + bought_count(mem, CardName.HIRELING)
         + bought_count(mem, CardName.MARKET)
     )
-    return actions >= 6
+    return actions >= 7
 
 
 def _try(
@@ -253,7 +267,7 @@ def choose_buy(
 
     if money >= 6:
         golds = bought_count(mem, CardName.GOLD)
-        # Empire : 1er Or, puis Hireling, puis encore de l'Or.
+        # Empire / Bowser : 1er Or, puis Hireling×2, puis Or.
         if (
             allow_actions
             and golds >= 1
@@ -266,7 +280,7 @@ def choose_buy(
         if allow_actions and (picked := _try(game, mem, CardName.HIRELING)):
             return picked
 
-    # Greening : Duché seulement quand la pile Province a vraiment bougé.
+    # Greening prioritaire dès que la pile bouge (multi-buy Festival).
     if money >= 5 and provinces_left <= duchy_at and can_buy(game, CardName.DUCHY):
         return CardName.DUCHY
 
@@ -277,15 +291,17 @@ def choose_buy(
 
     buy_actions = allow_actions and not action_overload(mem)
 
-    # --- Splash type Empire -----------------------------------------------
+    # --- Attaques + moteur (pression max sur les bots fragiles) ------------
     if buy_actions and money >= 5:
         if curses_left > 0 and (picked := _try(game, mem, CardName.WITCH)):
+            return picked
+        if want_festival(mem) and (picked := _try(game, mem, CardName.FESTIVAL)):
             return picked
         if picked := _try(game, mem, CardName.LABORATORY):
             return picked
         if curses_left == 0 and (picked := _try(game, mem, CardName.BANDIT)):
             return picked
-        if need_villages(mem) and (picked := _try(game, mem, CardName.FESTIVAL)):
+        if not witch_board and (picked := _try(game, mem, CardName.COUNCILROOM)):
             return picked
         if picked := _try(game, mem, CardName.MINE):
             return picked
@@ -293,10 +309,7 @@ def choose_buy(
             return picked
 
     if buy_actions and money >= 4:
-        # Smithy souvent en ouverture Empire si pas de Witch.
-        if bought_count(mem, CardName.WITCH) == 0 and bought_count(mem, CardName.MILITIA) == 0:
-            if picked := _try(game, mem, CardName.SMITHY):
-                return picked
+        # Militia avant Smithy : force défausse / élimine les hooks cassés.
         if picked := _try(game, mem, CardName.MILITIA):
             return picked
         if need_villages(mem):
@@ -307,6 +320,13 @@ def choose_buy(
             ):
                 if picked := _try(game, mem, village):
                     return picked
+        # Smithy seulement si pas d'attaque disponible / déjà prise.
+        if (
+            bought_count(mem, CardName.WITCH) == 0
+            and bought_count(mem, CardName.MILITIA) == 0
+            and (picked := _try(game, mem, CardName.SMITHY))
+        ):
+            return picked
         if picked := _try(game, mem, CardName.MONEYLENDER):
             return picked
         if picked := _try(game, mem, CardName.BUREAUCRAT):
@@ -317,8 +337,22 @@ def choose_buy(
     if buy_actions and money >= 3:
         if need_villages(mem) and (picked := _try(game, mem, CardName.VILLAGE)):
             return picked
+        # Attaque cheap seulement si pas de Witch/Militia au kingdom.
+        if (
+            not witch_board
+            and not in_kingdom(game, CardName.MILITIA)
+            and bought_count(mem, CardName.FORTUNETELLER) == 0
+            and (picked := _try(game, mem, CardName.FORTUNETELLER))
+        ):
+            return picked
 
-    if buy_actions and money >= 2 and (picked := _try(game, mem, CardName.CHAPEL)):
+    # Chapelle à 2$ seulement : à 3$ on préfère l'Argent (course BM).
+    if (
+        buy_actions
+        and money == 2
+        and witch_board
+        and (picked := _try(game, mem, CardName.CHAPEL))
+    ):
         return picked
 
     if money >= 4 and want_gardens and can_buy(game, CardName.GARDENS):
@@ -414,13 +448,15 @@ def choose_action(hand: Cards | None, game: Game) -> CardName | None:
         elif name == CardName.MINE and has_upgrade:
             prio = 32
         elif name == CardName.MILITIA:
-            prio = 25
+            prio = 40
         elif name == CardName.BANDIT:
-            prio = 20
+            prio = 28
+        elif name == CardName.FORTUNETELLER:
+            prio = 22
+        elif name == CardName.BUREAUCRAT:
+            prio = 18
         elif name == CardName.REMODEL:
             prio = 15
-        elif name == CardName.BUREAUCRAT:
-            prio = 12
         elif name == CardName.WITCH:
             prio = 5
         else:
@@ -481,8 +517,9 @@ def keep_value(card: CardName) -> int:
     if cls.is_action:
         attack = {
             CardName.WITCH: 12,
-            CardName.MILITIA: 10,
-            CardName.BANDIT: 9,
+            CardName.MILITIA: 14,
+            CardName.BANDIT: 11,
+            CardName.FORTUNETELLER: 10,
             CardName.FESTIVAL: 8,
             CardName.LABORATORY: 8,
             CardName.HIRELING: 8,
@@ -528,16 +565,17 @@ def gain_score(card: CardName, mem: GameMemory) -> int:
         CardName.GOLD: 160,
         CardName.WITCH: 155 if mem.curses_left > 0 else 25,
         CardName.HIRELING: 150,
-        CardName.FESTIVAL: 145,
+        CardName.FESTIVAL: 148,
         CardName.LABORATORY: 142,
-        CardName.MILITIA: 140,
+        CardName.MILITIA: 146,
         CardName.BANDIT: 138,
+        CardName.FORTUNETELLER: 125,
+        CardName.COUNCILROOM: 132,
         CardName.MARKET: 130,
         CardName.FARMINGVILLAGE: 128,
         CardName.PORT: 126,
         CardName.VILLAGE: 124,
         CardName.SMITHY: 120,
-        CardName.COUNCILROOM: 118,
         CardName.DUCHY: 110 if late else 28,
         CardName.GARDENS: 100 if gardens_time or approx_deck_size(mem) >= 20 else 40,
         CardName.MINE: 148,

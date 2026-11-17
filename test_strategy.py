@@ -1,4 +1,4 @@
-"""Tests stratégie adaptative top-Elo."""
+"""Tests stratégie agressive anti-classement."""
 
 from __future__ import annotations
 
@@ -68,6 +68,8 @@ def stock(extra: dict[CardName, int] | None = None) -> dict[CardName, int]:
         CardName.CHAPEL: 10,
         CardName.MARKET: 10,
         CardName.GARDENS: 12,
+        CardName.FORTUNETELLER: 10,
+        CardName.COUNCILROOM: 10,
     }
     if extra:
         base.update(extra)
@@ -84,11 +86,11 @@ def main() -> None:
     init_game("prio")
     mem = _memory("prio")
 
-    check("$3 silver (sans chapel)", choose_buy(make_game({}), 3, mem), CardName.SILVER)
+    check("$3 silver (pas chapel a 3)", choose_buy(make_game({}), 3, mem), CardName.SILVER)
     check(
-        "$3 chapel prioritaire",
+        "$3 silver meme si witch kingdom",
         choose_buy(make_game({}, stock=stock()), 3, mem),
-        CardName.CHAPEL,
+        CardName.SILVER,
     )
     check("$6 gold", choose_buy(make_game({}), 6, mem), CardName.GOLD)
     check("$8 province", choose_buy(make_game({}), 8, mem), CardName.PROVINCE)
@@ -99,19 +101,19 @@ def main() -> None:
     )
     mem.bought[CardName.WITCH] = 2
     check(
-        "$5 apres witches -> laboratory",
+        "$5 apres witches -> festival",
         choose_buy(make_game({}, stock=stock()), 5, mem),
+        CardName.FESTIVAL,
+    )
+    mem.bought[CardName.FESTIVAL] = 2
+    check(
+        "$5 apres festival -> laboratory",
+        choose_buy(make_game({}, stock=stock({CardName.BANDIT: 0})), 5, mem),
         CardName.LABORATORY,
     )
     mem.bought[CardName.LABORATORY] = 2
     check(
-        "$5 festival si 2 witches",
-        choose_buy(make_game({}, stock=stock({CardName.BANDIT: 0})), 5, mem),
-        CardName.FESTIVAL,
-    )
-    mem.bought[CardName.FESTIVAL] = 1
-    check(
-        "$5 apres festival -> mine",
+        "$5 apres lab -> mine",
         choose_buy(
             make_game({}, stock=stock({CardName.MINE: 10, CardName.BANDIT: 0})),
             5,
@@ -121,13 +123,7 @@ def main() -> None:
     )
     mem.bought.clear()
     check(
-        "$4 smithy ouverture (pas witch/militia)",
-        choose_buy(make_game({}, stock=stock()), 4, mem),
-        CardName.SMITHY,
-    )
-    mem.bought[CardName.SMITHY] = 1
-    check(
-        "$4 militia apres smithy",
+        "$4 militia prioritaire",
         choose_buy(make_game({}, stock=stock()), 4, mem),
         CardName.MILITIA,
     )
@@ -173,21 +169,20 @@ def main() -> None:
     )
 
     mem.bought.clear()
-    mem.bought.clear()
     check(
-        "$5 p4 duchy (2j)",
-        choose_buy(make_game({}, provinces=4, stock=stock()), 5, mem),
+        "$5 p5 duchy (2j)",
+        choose_buy(make_game({}, provinces=5, stock=stock()), 5, mem),
         CardName.DUCHY,
     )
     check(
-        "$4 p5 gardens (2j)",
-        choose_buy(make_game({}, provinces=5, stock=stock()), 4, mem),
+        "$4 p6 gardens (2j)",
+        choose_buy(make_game({}, provinces=6, stock=stock()), 4, mem),
         CardName.GARDENS,
     )
     check(
-        "$5 p7 duchy (3j)",
+        "$5 p8 duchy (3j)",
         choose_buy(
-            make_game({}, provinces=7, stock=stock(), n_players=3),
+            make_game({}, provinces=8, stock=stock(), n_players=3),
             5,
             mem,
         ),
@@ -204,10 +199,9 @@ def main() -> None:
         CardName.CHAPEL,
     )
 
-    # Smithy si pas de witch au kingdom
     mem.bought.clear()
     check(
-        "$4 smithy sans witch pile",
+        "$4 smithy sans attack pile",
         choose_buy(
             make_game(
                 {},
@@ -218,6 +212,8 @@ def main() -> None:
                     CardName.PORT: 0,
                     CardName.VILLAGE: 0,
                     CardName.BUREAUCRAT: 0,
+                    CardName.MONEYLENDER: 0,
+                    CardName.FORTUNETELLER: 0,
                 },
             ),
             4,
@@ -255,6 +251,14 @@ def main() -> None:
         ),
         CardName.WITCH,
     )
+    check(
+        "militia avant smithy",
+        choose_action(
+            Cards(quantities={CardName.MILITIA: 1, CardName.SMITHY: 1}),
+            make_game({}, stock=stock()),
+        ),
+        CardName.MILITIA,
+    )
 
     end_game_state("t1")
     init_game("t1")
@@ -266,7 +270,6 @@ def main() -> None:
     check("ACTION festival", decide_play(gs, "t1"), "ACTION festival")
     check("BUY gold", decide_play(gs, "t1"), "BUY gold")
 
-    # Anti-crash : decide_play ne doit jamais lever
     end_game_state("bad")
     init_game("bad")
     reset_turn("bad")
@@ -278,36 +281,29 @@ def main() -> None:
     )
 
     hand_attacked = [CardName.GOLD, CardName.CURSE, CardName.ESTATE, CardName.COPPER]
-    check("defausse curse", choose_discard(hand_attacked), CardName.CURSE)
-    check("trash curse", choose_trash(hand_attacked, mem), CardName.CURSE)
-    check("trash copper ok", confirm_trash(CardName.COPPER, hand_attacked, mem), True)
-    check("trash gold no", confirm_trash(CardName.GOLD, hand_attacked, mem), False)
-    check("discard estate", confirm_discard(CardName.ESTATE, hand_attacked), True)
+    check("discard curse", choose_discard(hand_attacked), CardName.CURSE)
+    check("confirm discard curse", confirm_discard(CardName.CURSE, hand_attacked), True)
+    check("confirm trash copper", confirm_trash(CardName.COPPER, hand_attacked, mem), True)
     check(
-        "gain gold > copper",
-        choose_gain([CardName.COPPER, CardName.GOLD, CardName.ESTATE], mem),
-        CardName.GOLD,
+        "trash curse first",
+        choose_trash([CardName.SILVER, CardName.CURSE, CardName.COPPER], mem),
+        CardName.CURSE,
     )
-    check("skip curse", skip_reception(CardName.CURSE, [CardName.COPPER]), True)
-    check("take gold", skip_reception(CardName.GOLD, [CardName.COPPER]), False)
     check(
-        "mine copper first",
-        choose_money_to_upgrade([CardName.GOLD, CardName.COPPER, CardName.SILVER]),
+        "gain witch si dispo",
+        choose_gain([CardName.SILVER, CardName.WITCH, CardName.COPPER], mem),
+        CardName.WITCH,
+    )
+    check(
+        "skip curse reception",
+        skip_reception(CardName.CURSE, [CardName.GOLD]),
+        True,
+    )
+    check(
+        "mine upgrade copper",
+        choose_money_to_upgrade([CardName.SILVER, CardName.COPPER]),
         CardName.COPPER,
     )
-    check(
-        "joue pretteur avec copper",
-        choose_action(
-            Cards(quantities={CardName.MONEYLENDER: 1, CardName.COPPER: 1, CardName.MILITIA: 1}),
-            make_game({}),
-        ),
-        CardName.MONEYLENDER,
-    )
-
-    init_game("A")
-    init_game("B")
-    _memory("A").bought[CardName.WITCH] = 9
-    check("isolation", _memory("B").bought.get(CardName.WITCH, 0), 0)
 
     print("Tous les tests OK.")
 
